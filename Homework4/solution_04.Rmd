@@ -1,0 +1,362 @@
+---
+title: "Hausaufgabe 04"
+author:
+  - "Hennig, Dustin"
+date: "21. Juni 2022"
+output:
+  html_document:
+    theme: spacelab
+    highlight: tango
+    css: style.css
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,tidy = TRUE,fig.align = "center",fig.width = 8.4, fig.height = 6.4
+  )
+
+pacman::p_load(
+  "collapse","data.table","patchwork","ggplot2"
+  )
+# Black-White Theme als Standard festlegen
+theme_set(theme_minimal()); setDTthreads(4)
+# Wissenschaftliche Notation deaktivieren
+options(scipen = 999)
+# Workspace leeren
+rm(list = ls())
+
+### Achtung:
+# Klappt nur im VPN + aktives Kerberos Token
+# setwd("//AFS/.tu-chemnitz.de/project/MRZ/SPSS/SS-2022/kurs07/hdus/hausaufgaben/ha-4")
+```
+
+# Aufgabe 1 - Lineare Modelle: einfaktorielle ANOVA {.tabset .tabset-fade}
+
+Der Datensatz DietWeigthLoss.txt enthält die Gewichtsverluste bei verschiedenen Diäten.
+
+## Aufgabe 1a)
+
+Importieren Sie diesen nach R.
+
+```{r Datenimport 1a}
+data <- fread("DietWeigthLoss.txt", colClasses = c("numeric","factor"))
+descr(data)
+```
+
+Der Datensatz enthält Angaben über den Gewichtsverlust sowie die jeweils durchgeführte Diät. Der minimale Gewichtsverlust beträgt 3.8, der maximale 15.1. Die Einheit ist unbekannt. Der Datensatz enthält vier verschiedene Diätformen (klassifiziert als A bis D).
+
+## Aufgabe 1.b)
+
+Ermitteln Sie,
+
+-   wie viele Teilnehmer bei jeder Diät mitgemacht haben,
+
+-   die Gruppeneffekte sowie
+
+-   die Gruppenmittelwerte.
+
+Aus den summary-Statistics in [Aufgabe 1a)] ist bereits bekannt, dass je Diät 15 Teilnehmende im Datensatz vorhanden sind. Die separate Berechnung wird der Vollständigkeit halber dennoch vorgenommen.
+
+```{r AnzahlTeilnehmende1b}
+data |> GRP("Diet")
+```
+
+Es sind jeweils 15 Teilnehmende im Datensatz enthalten für die 4 verschiedenen Diätarten (A - D).
+
+Die Gruppeneffekte entsprechen der Differenz zwischen dem Gruppenmittelwertschätzer $\bar{Y_k}$ und dem Datensatzmittelwert $\bar{Y}$. Sie werden innerhalb des linearen Modells der ANOVA verwendet: $Y_{kj} = \mu_k + E_{kj} = \mu + (\mu_k - \mu) + E_{kj}$. Da die wahren Gruppenmittelwerte und Gesamtmittelwerte unbekannt sind, müssen diese durch die vorliegende Stichprobe erst geschätzt werden.
+
+```{r GruppenEffektMittel1b}
+# Berechnung des Gesamtmittelwertes
+mean_WeightLoss <- fmean(data$WeightLoss)
+# Gruppeneffekt und Gruppenmittelwert
+data |>
+  fsummarise(
+    Diet = LETTERS[1:4],
+    Gruppeneffekt = fmean(WeightLoss, Diet) - mean_WeightLoss,
+    Gruppenmittel = fmean(WeightLoss, Diet)
+  )
+```
+
+## Aufgabe 1.c)
+
+Erzeugen Sie eine Grafik, die alle Gruppenmittelwerte und den Gesamtmittelwert darstellt.
+
+```{r Grafik1c}
+data |>
+  fgroup_by("Diet") |>
+  fsummarise(
+    Gruppeneffekt = fmean(WeightLoss) - mean_WeightLoss,
+    Gruppenmittel = fmean(WeightLoss),
+    Gruppen_SD    = fsd(WeightLoss)
+  ) |>
+  ggplot() +
+  geom_point(
+    aes(Diet, Gruppenmittel),
+    size = 6.5) +
+  geom_label(
+    aes(Diet, Gruppenmittel, label = round(Gruppenmittel,2)),
+    nudge_y = .5, size = 6, label.size = NA, fill = "transparent"
+  ) +
+  geom_hline(
+    yintercept = mean_WeightLoss, lty = 2, size = 1.5, col = "grey60"
+  ) +
+  annotate(
+    geom = "text", x = 1.5, y = (mean_WeightLoss + .5),
+    label = paste("Gesamtmittelwert =",mean_WeightLoss), size = 8, col = "grey60"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title = element_blank(),
+    axis.text.y = element_blank(),
+    plot.title.position = "plot",
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.margin = margin(t = 2, r = 0, b = 7, l = 0, unit = "mm")
+    ) +
+  labs(
+    title = "Gruppierte Mittelwerte verschiedener Diäten",
+    subtitle = "Datensatz: DietWeigthLoss.txt"
+  ) +
+  ylim(5,15)
+```
+
+## Aufgabe 1.d)
+
+Hat die durchgeführte Diät einen Einfluss auf das abgenommene Gewicht? Erstellen Sie hierfür in R ein Modell, welches die Abhängigkeiten beschreibt. Erzeugen Sie zusätzlich zu [Aufgabe 1.c)] eine weitere Grafik, die diese Abhängigkeit darstellt.
+
+```{r Modell1d}
+model1 <- lm(WeightLoss ~ Diet, data)
+summary_coeffs <- qDT(summary.lm(model1)$coefficients) |>
+  fmutate(Diet = LETTERS[1:4],
+          Estimate = fcase(Diet == "A", Estimate,
+                           Diet != "A", Estimate + 9.18))
+data |>
+  fsummarise(sd = fsd(WeightLoss,Diet))
+
+ggplot(data) +
+  # Punkte des Datensatzes
+  geom_point(aes(Diet, WeightLoss, col = Diet),
+             position = position_jitter(width = .1, height = 0)) +
+  # Koeffizienten der ANOVA
+  geom_point(
+    data = summary_coeffs,
+    aes(Diet, Estimate, fill = Diet),
+    pch = 21, col = "black", size = 2.5) +
+  # Errorbars als Schwankung um den Mittelwert
+  geom_errorbar(
+    data = data |> fsummarise(Diet = LETTERS[1:4],
+                              mean = fmean(WeightLoss,Diet),
+                              sd = fsd(WeightLoss,Diet)),
+    aes(x = Diet, ymin = mean - sd, ymax = mean + sd),
+    width = .2
+  ) +
+  scale_color_manual(values = c("green","blue","red","cyan")) +
+  scale_fill_manual(values = c("green","blue","red","cyan")) +
+  theme(
+    legend.position = "bottom",
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    plot.title.position = "plot",
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.margin = margin(t = 2, r = 0, b = 7, l = 0, unit = "mm")
+    ) +
+  labs(
+    title = "Gewichtsverlust je Diät und zugehörige Gruppenmittelwerte"
+  )
+```
+
+Die Abbildung zeigt, dass die durchgeführte Diät offensichtlich einen Einfluss auf den erzielten Gewichtsverlust hat. Hierbei schneiden die Diäten A und B deutlich schlechter ab als C und D. Den stärksten Gewichtsverlust erzielten Teilnehmende der Gruppe C mit im Mittel 12.11 kg Gewichtsverlust.
+
+## Aufgabe 1.e)
+
+Überprüfen Sie mit einem geeigneten statistischen Test obige Fragestellung. Formulieren Sie hierfür die Hypothesen und die Voraussetzungen des Tests. Überprüfen Sie diese. Werten Sie die Testergebnisse aus.
+
+Die zu testende Hypothese lautet $H_0: \mu_{A} = \mu_{B} = \mu_{C} = \mu_{D}$ und die entsprechende Alternativhypothese $H_1: \exists \mu_i \neq \mu_j \text{ für } i \neq j \text{ und } i,q \in \{A,B,C,D\}$. Geeignete statistische Tests für die vorliegende Stichprobe unverbundener Gruppenwerte könnten ein Kruskall-Wallis-Test oder eine ANOVA sein. Um eine ANOVA nutzen zu können, müssten die vorliegenden Messwerte für den Gewichtsverlust einer Normalverteilung entstammen und die Varianz in den Gruppen gleich sein:
+
+```{r Normalverteilungshypothese}
+data |>
+  fsummarise(
+    shapiro = list(broom::tidy(shapiro.test(WeightLoss))),
+    lillie = list(broom::tidy(nortest::lillie.test(WeightLoss))),
+    bartlett = list(broom::tidy(bartlett.test(WeightLoss ~ Diet)))
+  ) |>
+  melt.data.table(measure.vars = 1:3, variable.name = "name", value.name = "values") |>
+  tidyr::unnest(values)
+```
+
+Sowohl die Normalverteilungsannahme als auch die Varianzhomogenität zwischen den Gruppen können nicht signifikant abgelehnt werden. Darüber hinaus sind die Skalierungen der Datenpunkte geeignet, es liegen keine extremenen Ausreißer vor und die Messwerte sind voneinander unabhängig. Eine ANOVA zur Überprüfung der Nullhypothese darf demnach durchgeführt werden.
+
+```{r ANOVA1e}
+anova1 <- aov(WeightLoss ~ Diet, data)
+summary.lm(anova1); summary.aov(anova1)
+```
+
+Die ANOVA zeigt einen existierenden signifikanten Unterschied zwischen den Gruppenmittelwerten auf, weshalb die Nullhypothese verworfen werden kann (vgl. F-Statistik p-Wert von 0.00113).
+
+## Aufgabe 1.f)
+
+Erstellen Sie einen Plot, der die vorausgesagten Werte des Modells gegen die Residuen abträgt.
+
+```{r}
+ggplot(data) +
+  geom_point(aes(anova1$fitted.values, anova1$residuals, col = Diet),
+             position = position_jitter(width = .05, height = 0)) +
+  geom_hline(yintercept = 0) +
+  scale_color_manual(values = c("green","blue","red","cyan")) +
+  theme(
+    legend.position = "bottom",
+    axis.title = element_blank(),
+    plot.title.position = "plot",
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.margin = margin(t = 2, r = 0, b = 7, l = 0, unit = "mm")
+    ) +
+  labs(
+    title = "Vorhergesagter Gewichtsverlust und Residuen",
+    subtitle = "je Diät"
+  )
+```
+
+```{r Abschluss1, include=FALSE}
+rm(list = ls()); gc()
+```
+
+# Aufgabe 2 - Regressionsanalyse {.tabset .tabset-fade}
+
+Der Datensatz informatik.txt enthält das Spiegel-Ranking der Informatik-Fachbereiche größerer deutscher Universitäten aus dem Spiegel Nr. 15/1999.
+
+## Aufgabe 2.a)
+
+Importieren Sie den Datensatz und stellen Sie den Zusammenhang zwischen allen drei Variablen (Ranking-Note, Ausstattung der Fachbereiche und Dozentenverhalten) grafisch dar.
+
+```{r DatenImport2}
+data <- fread("informatik.txt", select = 2:4, colClasses = "numeric")
+descr(data)
+```
+
+```{r Grafik2a}
+ggplot(data) +
+  geom_point(aes(Dozent,Ausstattung, col = Note), size = 4)
+```
+
+## Aufgabe 2.b)
+
+Berechnen Sie die Korrelationsmatrix.
+
+```{r KorrMat}
+(cor_mat <- cor(data))
+```
+
+Alle drei Variablen sind stark positiv miteinander korreliert. Den stärksten positiven Zusammenhang weisen dabei die Variablen Note und Ausstattung mit `r round(cor_mat[3,1],2)` auf. Die Gesamtnote und die Note für den Dozenten sind am zweitstärksten miteinander korreliert mit einem Wert von `r round(cor_mat[2,1],2)`. Die hohen Korrelationen sind dabei nicht verwunderlich, da die Note aus den Bewertungen der Ausstattung und dem Dozenten gebildet wird.
+
+## Aufgabe 2.c)
+
+Führen Sie eine lineare Regression durch, um den Einfluss der Ausstattung auf die Note zu erklären. Stellen Sie die Regressionsgerade sowie die Datenpunkte grafisch dar.
+
+```{r LinReg2c}
+model1 <- lm(Note ~ Ausstattung, data)
+
+ggplot(data, aes(Ausstattung, Note)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE)
+```
+
+## Aufgabe 2.d)
+
+Führen Sie außerdem eine lineare Regression durch, um den Einfluss der Dozenten auf die Note zu erklären. Stellen Sie diese Regressionsgerade sowie die Datenpunkte ebenfalls grafisch dar.
+
+```{r LinReg2d}
+model2 <- lm(Note ~ Dozent, data)
+summary(model2)
+
+ggplot(data, aes(Dozent, Note)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE)
+```
+
+## Aufgabe 2.e)
+
+Werten Sie beide linearen Modelle aus. Gehen Sie dabei auf alle von R durchgeführten statistischen Tests ein. Formulieren Sie die Hypothesen und werten die Tests aus.
+
+**Model 1: Note \~ Ausstattung**
+
+```{r}
+summary.lm(model1)
+```
+
+`R` testet für die Koeffizienten die Nullhypothesen $H_0^{\beta_0}:\beta_0 = 0$ und $H_0^{\beta_1}:\beta_1 = 0$ gegen die jeweiligen Alternativenhypothesen, dass der Parameter ungleich Null ist. Hierfür werden zweiseitige t-Tests verwendet, die jeweiligen t-Statistiken und zugehörige p-Werte werden in `summary.lm()` ausgegeben, zusätzlich zum geschätzten Parameter und dem Standardfehler der Parameterschätzung. Vorliegend ist der Schätzer der Konstante gleich 0.31092 mit einer Standardabweichung von 0.12086 und einem zugehörigen p-Wert von 0.0142 (d.h. signifikant auf dem 5%-Niveau). Der Schätzers des Geradenanstiegs $\hat{\beta}_1$ ist hier geich 0.84647 mit Standardfehler 0.04884 und zugehörigem p-Wert von $\approx0$, d.h. der Schätzer ist hochsignifikant auf dem \<0.01%-Niveau.
+
+Weiterhin berechnet `R` den Standardfehler der Residuen, d.h. wie stark die Residuen um die gefitteten Werte schwanken und mithin wie gut das Modell auf die gegebenen Datenpunkte passt (hier: 0.1239). In diesem Zusamenhang ergibt sich ebenfalls das Bestimmtheitsmaß $R^2 \in [0,1]$, welches den durch das Modell erklärten Anteil der Schwankung angibt (hier: 0.8903). Der Wert des adjustierten Bestimmtheitsmaßes stellt die Korrektur des Bestimmtheitsmaßes mit Zunahme weiterer Parameter dar um dem Problem der Überanpassung (engl: *overfitting*) zu begegnen (hier: 0.8874). Das Modell kann demnach 89 % der Schwankung der Datenpunkten erklären, während die restlichen 11% auf den Fehlerterm entfallen.
+
+Der letzte Test der durchgeführt wird ist ein F-Test, welcher die Nullhypothese $H_0: \hat{\beta}_0 = \hat{\beta}_1 = 0$ testet mit der Alternativhypothese $H_1: \exists\hat{\beta}_k \neq 0$. Sie gibt den Anteil der erklärten Varianz an der unerklärten Varianz an. Die Freiheitsgrade ergeben sich aus den verwendeten Parametern (hier: 1, da ein Einflussparameter geschätzt wird) und der Zahl der Beobachtungen (hier: 39 - 1 = 38). Der F-Wert wird hier mit 300.4 angegeben, welcher sich beispielsweise durch $F = \frac{R^2}{1 - R^2} \cdot \frac{n - P - 1}{P}$ berechnen lässt, wobei $n$ die Anzahl der Beobachtungen (39) und $P$ die Parameteranzahl (1) ist. Aufgrund von Rundungsfehler würde sich für diese Formel $F = 300.2835$ ergeben. Der p-Wert entspricht dann einfach der oberhalb des Quantils der F-Verteilung liegenden W ahrscheinlichkeitsmasse mit den entsprechenden Freiheitsgraden, d.h. $1 - F_{(1,38)}(300.2835) =$`r pf(300.2835,1,38, lower.tail = FALSE)`. Dieser p-Wert ist nahe Null und daher auf allen Niveaus signifikant. Es gibt also mindestens einen Parameter welcher sich von Null unterscheidet.
+
+**Model 2: Note \~ Dozent**
+
+```{r}
+summary.lm(model2)
+```
+
+Die durchgeführten Tests und berechneten Parameter entsprechen in der Vorgehensweise denen aus den Ausführungen zu Model 1. Für Model 2 ergibt sich die Signifikant der Konstante auf dem 5 %-Niveau und die Signifikanz des Einflusses des Dozenten auf allen Niveaus. Die zugehörigen Schätzer sind $\hat{\beta}_0 = 0.42383$ und $\hat{\beta}_1=0.76333$. Der Standardfehler der Residuen beträgt 0.1875, das Bestimmtheitsmaß 0.7488 und das adjustierte Bestimmtheitsmaß 0.742. Die F-Statistik weist mit einem p-Wert von nahe Null ebenfalls aus, dass mindestens ein Parameter sich von Null unterscheidet.
+
+## Aufgabe 2.f)
+
+Geben Sie für [Aufgabe 2.c)] und [Aufgabe 2.d)] die Quadratsummen des Modells und der Residuen an.
+
+Für ein lineares Modell giltl vorliegend der Zusammenhang $SST = (Y - \bar{Y})'(Y - \bar{Y}) = (Y - \hat{Y})'(Y - \hat{Y}) + (\hat{Y} - \bar{Y})'(\hat{Y} - \bar{Y}) = SSE + SSM$, d.h. die Gesamtquadratsumme setzt sich aus den jeweiligen Quadratsummen der Residuen und des Modells zusammen.
+
+Alternativ kann eine Ausgabe mittels `summary.aov()` in R erfolgen.
+
+**Model 1 (2.c)**
+
+Die Quadratsumme der Residuen ergibt sich nach obiger Formel einfach durch $\sum_{i=1}^n(y_i - \hat{y_i})^2$ und ist vorliegend `r sum((data$Note - fitted(model1))^2)`. Für die Quadratsumme des Modells kann ebenfalls obige Berechnungsvorschrift Verwendung finden und wir erhalten $\sum_{i=1}^n(\hat{y_i}-\bar{Y})^2$ und damit `r sum((fitted(model1) - mean(data$Note))^2)`.
+
+```{r}
+summary.aov(model1)
+```
+
+
+**Model 2 (2.d)**
+
+Mit der gleichen Vorgehensweise erhalten wir für die Quadratsumme der Residuen `r sum((data$Note - fitted(model2))^2)` und für die Quadratsumme des Modells `r sum((fitted(model2) - mean(data$Note))^2)`.
+
+```{r}
+summary.aov(model2)
+```
+
+
+## Aufgabe 2.g)
+
+Was besagen die Bestimmtheitsmaße beider Modelle?
+
+Die Bestimmtheitsmaße geben den Erklärungsgehalt der Regressionslösung für die Schwankung der Datenpunkte an (siehe oben). Beide Bestimmtheitsmaße sind mit 0.89 resp. 0.75 sehr hoch und zeigen, dass die verwendeten Regressoren einen (sehr) guten Erklärungsgehalt für die beobachteten Werte des Regressanden liefern.
+
+## Aufgabe 2.h)
+
+Kann man die Bestimmtheitsmaße beider Modelle addieren, um das Bestimmtheitsmaß des linearen Modells, welches die Note in Abhängigkeit von Ausstattung und Dozenten beschreibt? Begründen Sie kurz Ihre Antwort.
+
+Nein, dies ist nicht möglich. Hierfür genügt es ein Gegenbeispiel zu finden, welches die Eigenschaft $R^2 \in [0,1]$ verletzt. Würde man beid $R^2$ addieren aus obigen Modellen, würde sich ein neuer Wert $R = R^2_{(1)} + R^2_{(2)}$ ergeben. Dieser ist gleich `r summary(model1)$r.squared + summary(model2)$r.squared` und damit nicht im Intervall $[0,1]$, sodass $R$ kein Bestimmtheitsmaß sein kann.
+
+## Aufgabe 2.i)
+
+Modellieren Sie ein umfassenderes Modell, um die Note zu erklären und werten Sie dieses aus. Betrachten Sie auch für dieses Modell die Quadratsummen. Welchen Einfluss hat die Reihenfolge der Prädiktoren?
+
+```{r LinReg2i}
+lin_models <- unlist2d(l = list(
+  A = broom::tidy(lm(Note ~ Ausstattung + Dozent, data)),
+  B = broom::tidy(lm(Note ~ Dozent + Ausstattung, data)),
+  C = broom::tidy(lm(Note ~ Dozent * Ausstattung, data))),
+  idcols = "model")
+lin_models
+
+aov_models <- unlist2d(l = list(
+  A = broom::tidy(aov(Note ~ Ausstattung + Dozent, data)),
+  B = broom::tidy(aov(Note ~ Dozent + Ausstattung, data)),
+  C = broom::tidy(aov(Note ~ Dozent * Ausstattung, data))),
+  idcols = "model")
+aov_models
+```
+
+Ohne Interaktionsterm ändert die Reihenfolge nichts an den Schätzern der Regressionsgeraden. Die Summe der einzelnen Quadratsummen ergibt jeweils die Gesamtquadratsumme für alle Modelle (hier: `r sum(aov_models[1:3,4])`).
+
+Das dritte Modell wird charakterisiert durch $\hat{\text{Note}_i} = \beta_0 + \beta_1\cdot \text{Dozent} + \beta_2 \cdot \text{Ausstattung} + \beta_3 \cdot (\text{Dozent} \times \text{Ausstattung})$. Hierbei ändern sich die Regressionskoeffizienten im Vergleich zu den beiden vorherigen Modellen, da letzteres über die bloßen additiven Effekte der Regressoren hinausgehen. Dabei zeigt sich, dass der Interaktionsterm signifikant ist und die beiden einzelnen Regressoren aus dem Modell herausfallen (da die p-Werte mit 0.4 und 0.6 nicht signifikant sind). Ein Blick auf die Bestimmtheitsmaße offenbart dabei, dass das Modell mit Interaktionsterm einen etwas besseren Erklärgehalt von `r summary(lm(Note ~ Dozent * Ausstattung, data))$r.squared` liefert, gegenüber den `r summary(lm(Note ~ Dozent + Ausstattung, data))$r.squared` aus dem bloßen additiven Modell.
+
+Zusammenfassend zeigt sich also, dass das umfassendere Modell einen besseren Erklärungsgehalt liefert als das Modell mit nur einem Regressor. Das Bestimmtheitsmaß steigt deutlich an und auch das adjustierte Bestimmtheitsmaß liegt noch deutlich oberhalb des Bestimmtheitsmaßes aus den Aufgabenteilen 2.c und 2.d. Die Reihenfolge ist für das additive Modell dabei irrelevant (ebenfalls für die additiven Terme des Modells mit Interaktionsterm). Die Quadratsummen der Regression und der Residuen addieren sich in allen Modellspezifikationen auf denselben Wert.
