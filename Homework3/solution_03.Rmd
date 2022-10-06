@@ -1,0 +1,419 @@
+---
+title: "Hausaufgabe 03"
+author:
+  - "Hennig, Dustin"
+date: "`r format(Sys.Date(), '%d. %B %Y')`"
+output:
+  html_document:
+    theme: spacelab
+    highlight: tango
+    css: style.css
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,tidy = TRUE,fig.align = "center",fig.width = 8.4, fig.height = 6.4
+  )
+
+pacman::p_load(
+  "tidyverse","data.table","patchwork","gganimate","boot"
+  )
+# Black-White Theme als Standard festlegen
+theme_set(theme_bw()); setDTthreads(4)
+# Wissenschaftliche Notation deaktivieren
+options(scipen = 999)
+# Workspace leeren
+rm(list = ls())
+
+### Achtung:
+# Klappt nur im VPN + aktives Kerberos Token
+# setwd("//AFS/.tu-chemnitz.de/project/MRZ/SPSS/SS-2022/kurs07/hdus/hausaufgaben/ha-2")
+```
+
+## Aufgabe 1
+
+Veranschaulichen Sie den zentralen Grenzwertsatz.
+
+### Aufgabe 1.a)
+
+Simulieren Sie eine große Anzahl (z.B. $sim=10000$) unabhängiger Stichproben vom Umfang n für verschiedene Verteilungen und demonstrieren Sie den zentralen Grenzwertsatz, indem Sie die empirische Verteilung des simulierten arithmetischen Mittels und die entsprechende Normalverteilung grafisch darstellen.
+
+**Der zentrale Grenzwertsatz**
+
+Seien $X_i$ unabhängig identisch verteilte Zufallsvariablen mit endlicher Erwartung $\mathbb{E}(X_i) = \mu < \infty$ und endlicher Varianz $Var(X_i) = \sigma^2 < \infty$. Dann folgt aus dem Zentralen Grenzwertsatz, dass $\sqrt{n} \cdot (\bar{X} - \mu) \sim \mathscr{N}(0,\sigma^2)$, d.h. sie konvergiert gegen eine Normalverteilung mit Varianz $\sigma^2$, wobei $\sigma^2$ die Varianz der ursprünglichen Verteilung ist.
+
+Zunächst erstellen wir eine Funktion, welche eine beliebige Anzahl von Simulationen mit beliebigem Stichprobenumfang durchführt und anschließend jeweils den Mittelwert der Stichprobe bildet. Dadurch erhalten wir eine Folge i.i.d. Erwartungswerte der jeweils gleichen unterliegenden Verteilungen, für welche der Zentrale Grenzwertsatz Anwendung findet.
+
+```{r get_sample_mean}
+# Funktion, um eine Stichprobenziehung mit Mittelwertbildung fuer
+# beliebige Verteilungen zu simulieren
+get_sample_mean = function(distribution,
+                           sample_size = 30,
+                           pop_size = 10000,
+                           sim = 10000,...){
+  # Zufaelliger Seed fuer simulierte Werte
+  set.seed(sample(1000000,1))
+  # Verteilung abgreifen
+  distr = match.fun(distribution)
+  # Grundgesamtheit als Auspraegungen der gewaehlten Verteilung
+  population = distr(pop_size, ...)
+  # Vektor mit den Erwartungswerten je Sample erstellen
+  vals = replicate(sim,
+                   mean(sample(population, sample_size)))
+  return(vals)
+}
+```
+
+Anschließend wird ein Datensatz erstellt, welcher für folgende Verteilungsfunktionen Erwartungswertfolgen enthalten soll:
+
+-   Exponentialverteilung mit Parameter $\lambda = 5$
+
+-   Binomialverteilung mit $Bin(10000,50,0.6)$
+
+-   Chi-Quadrat-Verteilung mit 30 Freiheitsgraden
+
+-   Lognormal-Verteilung mit Parametern 0 und 0.5
+
+Der erstellte Datensatz wird sodann skaliert mit $z = \sqrt{n} \frac{(\bar{X}_n - \mu)}{\sigma}$, sodass die Mittelwertfolge in Verteilung gegen $\mathscr{N}(0,1)$ konvergiert (ohne Skalierung würde die Folge einfach gegen $\mathscr{N}(\mu,\sigma^2)$ konvergieren).
+
+```{r data}
+# Datensatz mit den Vier Verteilungen erstellen
+data = data.table()
+# Parameter vorher initialisieren
+sample_size = 30
+lambda = 5
+binom_size = 50; binom_prob = .6
+chisq_df = 30
+lognorm_mean = 0; lognorm_sd = .5
+
+data[, `:=`(
+  exponential = get_sample_mean(
+    distribution = "rexp",
+    sample_size = sample_size,
+    rate = lambda),
+  binomial =
+    get_sample_mean(
+      distribution = "rbinom",
+      sample_size = sample_size,
+      size = binom_size, prob = binom_prob),
+  chisq =
+    get_sample_mean(
+      "rchisq",
+      sample_size = sample_size,
+      df = chisq_df),
+  lognorm =
+    get_sample_mean(
+      "rlnorm",
+      sample_size = sample_size,
+      meanlog = lognorm_mean, sdlog = lognorm_sd))]
+# Long Format fuer ggplot2
+data = melt.data.table(
+  data, measure.vars = 1:4,
+  variable.name = "distribution",
+  value.name = "sample_mean")
+data[,
+     `:=`(
+       theoretical_mean = fcase(
+         # Theoretischer Mittelwert:
+         # Exponentialverteilung: E(X) = 1/lambda
+         distribution == "exponential", 1/lambda,
+         # Binomialverteilung: E(X) = n*p (Achtung: n = size in rbinom())
+         distribution == "binomial", binom_size * binom_prob,
+         # Chi-Quadrat-Verteilung: E(X) = df
+         distribution == "chisq", chisq_df,
+         # Lognormal-Verteilung: E(X) = exp(mu + sigma^2/2)
+         distribution == "lognorm", exp(lognorm_mean + lognorm_sd^2/2)
+       ),
+       theoretical_variance = fcase(
+         # Theoretische Varianz:
+         # Exponentialverteilung: Var(X) = 1/lambda^2
+         distribution == "exponential", 1/lambda^2,
+         # Binomialverteilung: Var(X) = n*p*(1-p) (Achtung: n = size in rbinom())
+         distribution == "binomial", binom_size * binom_prob * (1 - binom_prob),
+         # Chi-Quadrat-Verteilung: Var(X) = 2*df
+         distribution == "chisq", 2*chisq_df,
+         # Lognormal-Verteilung: Var(X) = exp(sigma^2 - 1) * exp(2*mu + sigma^2)
+         distribution == "lognorm", (exp(lognorm_sd^2) - 1) * exp(2*lognorm_mean + lognorm_sd^2)
+         )
+     )]
+
+# Zentrieren der Mittelwerte nach z = sqrt(n) * (Xbar - mu) / sd(X)
+data[,
+     centralised_means := sqrt(sample_size) * (sample_mean - theoretical_mean) / sqrt(theoretical_variance),
+     by = distribution]
+```
+
+Zur grafischen Veranschaulichung wird nachfolgend zunächst die empirische Dichte der Folge von Erwartungswerten der i.i.d. Zufallsvariablen mit der theoretischen Dichte einer Standardnormalverteilung über dem Histogramm der zentralisierten Mittelwerte abgebildet.
+
+```{r graphic histograms}
+# Histogramm mit Dichteschaetzer
+data %>%
+  ggplot(aes(centralised_means)) +
+  geom_histogram(aes(y = ..density..), bins = 55) +
+  geom_density(col = "red", size = 1) +
+  stat_function(fun = "dnorm") +
+  labs(title = "Verteilung der zentralisierten Mittelwerte verschiedener Verteilungen",
+       subtitle = "Stichprobenumfang: 30",
+       caption = "Rot: Empirische Dichte der zentralisierten Mittelwerte \nSchwarz: Theoretische Dichte Standardnormalverteilung") +
+  theme(axis.title.x = element_blank(),
+        plot.caption = element_text(hjust = 0)) +
+  facet_wrap(~ distribution)
+```
+
+Ein weiterer Blick auf die empirischen Verteilungsfunktionen verglichen mit der theoretischen Verteilungsfunktion der Standardnormalverteilung bestätigt den Zentralen Grenzwertsatz mit den vorliegend verwendeten Veteilungen.
+
+```{r graphic ecdf vs cdf}
+# Empirische Verteilungsfunktion vs. theoretische Verteilungsfunktion
+ecdf_graph = function(x,data){
+  graphdata = data[distribution == x]
+  pic <- ggplot(graphdata) +
+    stat_ecdf(aes(centralised_means), geom = "step", col = "red") +
+    stat_function(fun = pnorm) +
+    labs(title = paste("normal distribution vs. series of",x,"means")) +
+    theme(axis.title = element_blank(),
+          axis.ticks.y = element_blank())
+ return(pic)
+}
+
+graphics <- lapply(levels(data$distribution),ecdf_graph,data = data)
+graphics[[1]] + graphics[[2]] + graphics[[3]] + graphics[[4]]
+```
+
+### Aufgabe 1.b)
+
+Ermitteln Sie mit Hilfe der Simulation aus [Aufgabe 1.a)], ob die Faustregel, dass ab $n \approx 30$ das arithmetische Mittel näherungsweise normalverteilt ist, auch für eine sehr schiefe Verteilung (z.B. Lognormalverteilung mit Standardabweichung 2) wirklich sinnvolle Approximationen liefert. Wie groß sollten Sie n wählen?
+
+Hierfür sehen wir uns einen Vektor der Mittelwerte einer Lognormal-Verteilung mit Standardabweichung 2 an. Die Funktion `get_sample_mean()` generiert jedoch für jede Mittelwertsverteilung eine neue Population, sodass eine leicht modifizierte Version zuvor implementiert werden muss (je Aufruf mit unterschiedlichen Stichprobengrößen würde eine neue Population gezogen, sodass für eine gegebene Population die Frage nach der "optimalen" Stichprobengröße nicht zuverlässig beantwortet werden könnte).
+
+```{r get_sample_means2}
+get_sample_means2 = function(distribution,
+                            sample_size_vector = seq.default(100,1500,100),
+                            pop_size = 10000, sim = 10000,...){
+  # Zufaelliger Seed fuer simulierte Werte
+  set.seed(sample(1000000,1))
+  # Verteilung abgreifen
+  distr = match.fun(distribution)
+  # Grundgesamtheit als Auspraegungen der gewaehlten Verteilung
+  population = distr(pop_size, ...)
+  # Vektor mit den Erwartungswerten je Samplegroesse erstellen
+  vals = matrix(nrow = sim, ncol = length(sample_size_vector))
+  for (i in seq_along(sample_size_vector)){
+    vals[,i] <- replicate(sim,
+                          mean(sample(population, sample_size_vector[i])))
+  }
+  result = list(dist_pop = population,
+                mean_vals = vals)
+  return(result)
+}
+```
+
+```{r Lognormal means, warning=FALSE}
+# Matrix der Mittelwerte je Stichprobe
+values = get_sample_means2("rlnorm",sdlog=2,sample_size_vector = c(100,500,1500,5000))
+lognorm_sample_means = data.table(values$mean_vals)
+setnames(lognorm_sample_means, paste0("SP",c(100,500,1500,5000)))
+lognorm_sample_means = melt.data.table(lognorm_sample_means, measure.vars = 1:NCOL(lognorm_sample_means), variable.name =  "Stichprobenumfang", value.name = "Mittelwertschaetzer")
+# Animation
+hist_graphic = function(aes_col,data){
+  mittelwert = mean(data[Stichprobenumfang == aes_col,Mittelwertschaetzer])
+  standardabweichung = sd(data[Stichprobenumfang == aes_col,Mittelwertschaetzer])
+  pic = ggplot(data[Stichprobenumfang == aes_col],
+               aes(Mittelwertschaetzer)) +
+    geom_histogram(aes(y = ..density..), fill = "blue", alpha = .5, bins = 150) +
+    geom_density(col = "blue", size = .75) +
+    stat_function(fun = dnorm, args =
+                    list(mean = mittelwert,
+                         sd = standardabweichung),
+                  col = "darkblue", size = 1) +
+    theme(axis.title = element_blank()) +
+    labs(title = paste("Mittelwertschätzer mit",aes_col)) +
+    xlim(0,15)
+  return(pic)
+}
+
+graphics2_population <- ggplot(data = tibble(vals = values$dist_pop)) +
+  geom_histogram(aes(vals,after_stat(density)),
+                 fill = "grey50", bins = 250) +
+  xlim(0,50) +
+  labs(title = "Histogramm der Population") +
+  theme(axis.title = element_blank())
+graphics2 <- lapply(levels(lognorm_sample_means$Stichprobenumfang),
+                    function(x) hist_graphic(aes_col = x, data = lognorm_sample_means))
+
+graphics2_population / graphics2[[4]] / (graphics2[[1]] + graphics2[[2]] + graphics2[[3]])
+```
+
+Die Ergebnisse sind je nach Simulation extrem schwankend. Da die Lognormal-Verteilung als Heavy-tailed Verteilung einen extrem verzerrten Stichprobenmittelwert aufweisen kann, sind Ergebnisse möglich, in denen zwei Häufungen von Mittelwerten trotz Stichprobengrößen $\ge 500$ auftreten. Daraus folgt in der Anwendung, dass selbst für große Stichprobenumfänge $n \ge 500$ Ausreißer auftreten können, sodass sich die Verteilung der Stichprobenmittelwerte keiner Normalverteilung annähert. Vorliegend ergibt sich ab einem Stichprobenumfang von mindestens n = 1000 für eine extrem schiefe Lognormal-Verteilung eine verhältnismäßig gute Approximation der Normalverteilung (wenngleich in Einzelfällen selbst bei $n = 5000$ keine gute Annäherung erreicht wurde).
+
+### Aufgabe 1.c)
+
+Untersuchen Sie obige Faustregel für symmetrische Verteilungen.
+
+Bei symmetrischen Verteilungen kann es im Gegensatz zu den sehr schiefen Verteilungen nicht zu extremen Verzerrungen der Mittelwerte durch die extreme Varianz kommen. Entsprechend ist eine geringere Stichprobengröße ausreichend um eine hinreichende Annäherung an die Normalverteilung zu erreichen. Zusätzlich nähert sich die Mittelwertverteilung deutlicher schneller dem Populationsmittelwert an. In Konsequenz wird demnach eine deutlich geringere Stichprobengröße benötigt und für hinreichend große $n$ nähert sich die Verteilung der Dirac-Verteilung, ist also im Wesentlichen nur ein Ausschlag mit Varianz $\approx 0$ und Punktwert $\mathbb{E}(X)$. Anhand der Gleichverteilung soll dies kurz demonstriert werden.
+
+```{r Faustregel uniform}
+sample_size_n = seq.default(5,60,5)
+uniform_sample_means = data.table(do.call(
+  cbind,
+  lapply(sample_size_n,
+         function(x) get_sample_mean(distribution = "runif",sample_size = x,
+                         pop_size = 1000,sim = 10000,
+                         min = 0, max = 10))))
+setnames(uniform_sample_means, paste0("SP",sample_size_n))
+uniform_sample_means <- melt.data.table(uniform_sample_means,measure.vars = 1:NCOL(uniform_sample_means), variable.name = "sample_size",value.name = "mean_estimate")
+ggplot(uniform_sample_means, aes(mean_estimate)) +
+  geom_histogram(aes(y = ..density..), bins = 50, alpha = .5, fill = "blue") +
+  geom_density(col = "blue") +
+  facet_wrap(~ sample_size)
+```
+
+Wie der Verlauf der Mittelwertschätzerverteilung zeigt, ist bereits für eine Stichprobengröße von 5 eine Glockenkurve erkennbar. Mit zunehmender Stichprobengröße verläuft der Anstieg um den theoretischen Mittelwert der Population zunehmend steiler (vgl. [Dirac-Verteilung](https://de.wikipedia.org/wiki/Dirac-Verteilung)).
+
+```{r Abschluss Aufgabe 1,include=FALSE}
+rm(list = ls()); gc()
+```
+
+## Aufgabe 2
+
+Bei der Berechnung herkömmlicher Konfidenzintervalle für den Parameter $\mu = \mathbb{E}(X)$ benötigt man als Voraussetzung die Normalverteilung des Merkmals $X \sim \mathscr{N}(\mu, \sigma^2)$. Ist diese Verteilungsannahme nicht haltbar oder prinzipiell nicht überprüfbar, kann für große Stichproben aufgrund des zentralen Grenzwertsatzes diese Annahme vernachlässigt werden. Für kleine Stichproben kann man ohne einer konkreten Verteilungsannahme mittels Bootstrapping ebenso Konfidenzintervalle ermitteln.
+
+### Aufgabe 2.a)
+
+Berechnen Sie für die Stichprobe `(10, 27, 30, 40, 46, 51, 52, 104, 146)` in R selbstständig das zweiseitige Konfidenzintervall basierend auf den Quantilen der Standardnormalverteilung.
+
+Da die Intervallgrenzen nicht näher bezeichnet wurden, wird für diese sowieso die nachfolgenden Aufgaben das zweiseitige Konfidenzintervall zum Konfidenzniveau $\alpha = 5%$ beispielhaft berechnet.
+
+```{r ci standard normal}
+data_vec = c(10, 27, 30, 40, 46, 51, 52, 104, 146)
+# 1. Stichprobenmittelwert
+sp_mean = mean(data_vec)
+# 2. z-Transformatione der Ober- und Untergrenze
+z_up   =  qnorm(.975)
+z_down = -qnorm(.975)
+# 3. Stichprobenumfang
+sp_n   =  length(data_vec)
+# 4. Standardabweichung der Stichprobe
+sp_sd  =  sd(data_vec)
+# 5. Konfidenzintervalle berechnen
+ki_down=  sp_mean + z_down * sp_sd/sqrt(sp_n)
+ki_up  =  sp_mean + z_up * sp_sd/sqrt(sp_n)
+
+c(ki_down,ki_up)
+```
+
+### Aufgabe 2.b)
+
+Berechnen Sie für die Stichprobe `(10, 27, 30, 40, 46, 51, 52, 104, 146)` in `R` selbstständig das zweiseitige Konfidenzintervall basierend auf den Quantilen der t-Verteilung.
+
+```{r ci students t}
+data_vec =  c(10, 27, 30, 40, 46, 51, 52, 104, 146)
+# 1. Stichprobenmittelwert
+sp_mean  =  mean(data_vec)
+# 2. Freiheitsgrade und Stichprobenumfang
+sp_df    =  length(data_vec) - 1
+sp_n     =  length(data_vec)
+# 3. z-Transformatione der Ober- und Untergrenze
+z_up     =  qt(.975,df = sp_df)
+z_down   = -qt(.975, df = sp_df)
+# 4. Standardabweichung der Stichprobe
+sp_sd    =  sd(data_vec)
+# 5. Konfidenzintervalle berechnen
+ki_down  =  sp_mean + z_down * sp_sd/sqrt(sp_n)
+ki_up    =  sp_mean + z_up * sp_sd/sqrt(sp_n)
+
+c(ki_down,ki_up)
+```
+
+### Aufgabe 2.c)
+
+Schreiben Sie eine eigene `R`-Funktion, die als Input einen Vektor der Stichprobe sowie das Konfidenzniveau $1 − \alpha$ erhält und als Output beide berechneten Konfidenzintervalle zurück gibt.
+
+```{r ci function}
+calc_conf_int = function(vec,conf_niv){
+  # t Student
+  z_up_qt = qt(1 - (1 - conf_niv)/2, df = (length(vec) - 1))
+  z_down_qt = -qt(1 - (1 - conf_niv)/2, df = (length(vec) - 1))
+  result_qt = c(
+    "lower" = mean(vec) + z_down_qt * sd(vec) / sqrt(length(vec)),
+    "upper" = mean(vec) + z_up_qt * sd(vec) / sqrt(length(vec)))
+  # Normal
+  z_up_norm = qnorm(1 - (1 - conf_niv)/2)
+  z_down_norm = -qnorm(1 - (1 - conf_niv)/2)
+  
+  result_norm = c(
+    "lower" = mean(vec) + z_down_norm * sd(vec) / sqrt(length(vec)),
+    "upper" = mean(vec) + z_up_norm * sd(vec) / sqrt(length(vec)))
+  # Zusammenbinden
+  result = rbind(result_qt, result_norm)
+  rownames(result) <- c("tStudent","Normal")
+  return(result)
+}
+calc_conf_int(data_vec,.95)
+```
+
+### Aufgabe 2.d)
+
+Ergänzen Sie in Ihrer Funktion die Berechnung eines Konfidenzintervalls mittels Bootstrapping. Erzeugen Sie hierfür mit der `R`-Funktion `sample()` aus Ihrer ursprünglichen Stichprobe vom Umfang $n$ insgesamt $B$ (beispielsweise $B = 10.000$) neue Stichproben vom Umfang $n$ mit Zurücklegen und ermitteln Sie die entsprechenden empirischen Quantile, so dass diese den Grenzen des zweiseitigen Konfidenzintervalls zum Niveau $1 − \alpha$ entsprechen.
+
+```{r ci bootstrap}
+calc_conf_int_boot = function(vec,conf_niv,sim = 10000){
+  # Abschnitt 1: Quantilsfunktionen
+  # t Student
+  z_up_qt = qt(1 - (1 - conf_niv)/2, df = (length(vec) - 1))
+  z_down_qt = -qt(1 - (1 - conf_niv)/2, df = (length(vec) - 1))
+  result_qt = c(
+    "lower" = mean(vec) + z_down_qt * sd(vec) / sqrt(length(vec)),
+    "upper" = mean(vec) + z_up_qt * sd(vec) / sqrt(length(vec)),
+    "confidencelevel" = conf_niv,
+    "sim_size" = NA)
+  # Normal
+  z_up_norm = qnorm(1 - (1 - conf_niv)/2)
+  z_down_norm = -qnorm(1 - (1 - conf_niv)/2)
+  
+  result_norm = c(
+    "lower" = mean(vec) + z_down_norm * sd(vec) / sqrt(length(vec)),
+    "upper" = mean(vec) + z_up_norm * sd(vec) / sqrt(length(vec)),
+    "confidencelevel" = conf_niv,
+    "sim_size" = NA)
+  # Abschnitt2: Bootstrapping-Verfahren
+  bootstrap_sample = replicate(sim, mean(sample(vec,length(vec),TRUE)))
+  # Herausfiltern der alpha/2 größten und kleinsten Werte
+  # (Perzentil-KI als einfachste Form!)
+  result_boot = c(
+    "lower" = quantile(bootstrap_sample, 0 + (1 - conf_niv)/2),
+    "upper" = quantile(bootstrap_sample, 1 - (1 - conf_niv)/2),
+    "confidencelevel" = conf_niv,
+    "sim_size" = sim)
+  # Zusammenbinden
+  result = rbind(result_qt, result_norm, result_boot)
+  rownames(result) <- c("tStudent","Normal","Bootstrap")
+  return(result)
+}
+
+table_data = do.call(rbind, lapply(c(1000,5000,10000), function(x) {
+      do.call(rbind, lapply(c(.8,.9,.95), function(a) {
+                 calc_conf_int_boot(data_vec, conf_niv = a, sim = x)
+             }))
+}))
+table_data = as_tibble(table_data,rownames = "method") %>%
+  group_by(method) %>%
+  arrange(confidencelevel,.by_group = TRUE) %>%
+  select(method,confidencelevel,sim_size,lower, upper)
+table_data %>%
+  knitr::kable()
+```
+
+### Aufgabe 2.e)
+
+Machen Sie sich mit den R-Funktionen `boot()` und `boot.ci()` des R-Pakets `boot` vertraut und berechnen Sie mit deren Hilfe Konfidenzintervalle mittels Bootstrapping.
+
+```{r ci for boot(),warning=FALSE}
+get_mean = function(x,d){
+  return(mean(x[d]))
+}
+test = boot(data_vec,
+     statistic = get_mean,
+     R = 10000)
+boot.ci(test, type = "perc")
+```
