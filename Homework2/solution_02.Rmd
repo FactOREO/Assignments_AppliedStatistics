@@ -2,7 +2,7 @@
 title: "Hausaufgabe 02"
 author:
   - "Hennig, Dustin"
-date: "`r format(Sys.Date(), '%d. %B %Y')`"
+date: "28. April 2022"
 output:
   html_document:
     theme: spacelab
