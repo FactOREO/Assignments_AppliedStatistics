@@ -1,0 +1,25 @@
+h1, .h1 {
+  text-align: left;
+  color: #000000;
+}
+
+h2, .h2, h3, .h3 {
+  color: #000000;
+  text-align: left;
+  margin-top: 84px;
+}
+
+p {
+  text-indent: 2rem;
+  text-align: justify;
+  color: #565656;
+}
+
+p.caption {
+  font-size: 1em;
+  font-style: italic;
+  color: #808080
+  margin-right: 10%;
+  margin-left: 10%;
+  text-align: left
+}
